@@ -1,11 +1,16 @@
-﻿#pragma once
+#pragma once
 
-#include <asio.hpp>
+#include <Poco/Net/SocketStream.h>
+#include <Poco/Net/StreamSocketImpl.h>
+
 #include <iostream>
+#include <functional>
+#include <chrono>
+#include <thread>
+#include <string>
 #include <unordered_set>
 #include <unordered_map>
 
-using asio::ip::tcp;
 using namespace std::chrono;
 
 namespace stem
@@ -14,7 +19,7 @@ namespace stem
 	{
 	public:
 		typedef std::function<void(std::string /*channel*/, std::string /*data*/)> callback;
-		typedef std::weak_ptr<std::function<void(std::string /*channel*/, std::string /*data*/)>> callback_id;
+		typedef std::weak_ptr<std::function<void(std::string /*channel*/, std::string /*data*/)>> callback_ptr;
 
 	private:
 		enum packet_type { __message__, __subscribe__, __unsubscribe__, __ping__, __pong__ };
@@ -27,10 +32,8 @@ namespace stem
 			std::string data;
 		};
 
-		asio::io_context& io_context;
-		tcp::socket socket;
-
-		std::pair<std::string /*address*/, uint16_t /*port*/> server;
+		Poco::Net::StreamSocket socket;
+		Poco::Net::SocketAddress server;
 
 		std::unordered_map<std::string /*channel*/, uint16_t /*subscribers*/> subscribed_channels;
 		std::unordered_map<std::shared_ptr<callback> /*listener*/, std::unordered_set<std::string> /*subscriptions*/> message_listeners;
@@ -46,27 +49,31 @@ namespace stem
 		{
 			uint16_t size = 1 + pack.data.size() + (pack.type == __ping__ || pack.type == __pong__ ? 0 : pack.channel.size() + 1);
 
-			std::vector<asio::const_buffer> buffers;
-			buffers.push_back(asio::buffer({ static_cast<uint8_t>(size >> 8), static_cast<uint8_t>(size & 0xFF), pack.type }));
+			std::vector<uint8_t> buffer;
+
+			buffer.insert(buffer.end(), {static_cast<uint8_t>(size >> 8), static_cast<uint8_t>(size & 0xFF), pack.type});
 
 			if (!(pack.type == __ping__ || pack.type == __pong__))
 			{
-				buffers.push_back(asio::buffer({ static_cast<uint8_t>(pack.channel.size() & 0xFF) }));
-				buffers.push_back(asio::buffer(pack.channel));
+				buffer.insert(buffer.end(), { static_cast<uint8_t>(pack.channel.size() & 0xFF) });
+				buffer.insert(buffer.end(), pack.channel.begin(), pack.channel.end());
 			}
 
-			buffers.push_back(asio::buffer(pack.data));
+			buffer.insert(buffer.end(), pack.data.begin(), pack.data.end());
 
-			asio::write(socket, buffers);
+			socket.sendBytes(buffer.data(), buffer.size());
 		}
 
 		packet read()
 		{
-			std::vector<uint8_t> buffer(2);
-			asio::read(socket, asio::buffer(buffer));
+			uint8_t buff_size[2];
+			socket.receiveBytes(&buff_size, 2);
 
-			buffer.resize(buffer[0] << 8 | buffer[1]);
-			asio::read(socket, asio::buffer(buffer));
+			uint16_t data_size = buff_size[0] << 8 | buff_size[1];
+
+			std::vector<uint8_t> buffer(data_size);
+
+			socket.receiveBytes(buffer.data(), data_size);
 
 			packet p;
 			p.type = buffer[0];
@@ -155,11 +162,8 @@ namespace stem
 		}
 
 	public:
-		client(asio::io_context& io_context, std::string address, uint16_t port, bool connect = true) : io_context(io_context), socket(io_context)
+		client(std::string address, uint16_t port, bool connect = true) : server(address, port)
 		{
-			server.first = address;
-			server.second = port;
-
 			if (connect)
 				this->connect();
 		}
@@ -176,7 +180,6 @@ namespace stem
 			{
 				while (true)
 					on_packet(read());
-				//asio::post([this] { runner(); });
 			}
 			catch (std::exception& e)
 			{
@@ -184,30 +187,30 @@ namespace stem
 			}
 		}
 
-		//TODO: auto listen
 		void connect()
 		{
-			tcp::resolver resolver(io_context);
-			asio::connect(socket, resolver.resolve(server.first, std::to_string(server.second)));
+			socket.connect(server);
 		}
 
 		void disconnect()
 		{
 			if (is_connected())
-				asio::post(io_context, std::bind([this] { socket.close(); }));
+				socket.close();
 
 			subscribed_channels.clear();
 		}
 
+		//TODO: auto listen
 		void reconnect()
 		{
 			disconnect();
 			connect();
 		}
 
+		//TODO: fix (spoiler alert: it doesn't work at all)
 		bool is_connected()
 		{
-			return socket.is_open();
+			return true;
 		}
 
 		int64_t ping(milliseconds timeout = 5000ms)
@@ -241,14 +244,14 @@ namespace stem
 			write(request);
 		}
 
-		callback_id register_listener(callback listener)
+		callback_ptr register_listener(callback listener)
 		{
 			auto& reference = *message_listeners.insert(std::make_pair(std::make_shared<callback>(listener), std::unordered_set<std::string>())).first;
 
 			return reference.first;
 		}
 
-		void unregister_listener(callback_id id)
+		void unregister_listener(callback_ptr id)
 		{
 			auto search = message_listeners.find(id.lock());
 
@@ -268,7 +271,7 @@ namespace stem
 			message_listeners.clear();
 		}
 
-		void subscribe_listener(callback_id id, std::string channel)
+		void subscribe_listener(callback_ptr id, std::string channel)
 		{
 			auto listener_search = message_listeners.find(id.lock());
 
@@ -277,7 +280,7 @@ namespace stem
 			subscribe(channel);
 		}
 
-		void unsubscribe_listener(callback_id id, std::string channel)
+		void unsubscribe_listener(callback_ptr id, std::string channel)
 		{
 			auto listener_search = message_listeners.find(id.lock());
 
@@ -286,7 +289,7 @@ namespace stem
 			unsubscribe(channel);
 		}
 
-		void clear_listener_subscriptions(callback_id id)
+		void clear_listener_subscriptions(callback_ptr id)
 		{
 			auto listener_search = message_listeners.find(id.lock());
 

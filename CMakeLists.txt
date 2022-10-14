@@ -4,9 +4,9 @@ project ("stemlib")
 
 add_executable (stemlib "stemlib.cpp" "stemlib.hpp")
 
-target_compile_features (stemlib PRIVATE cxx_std_20)
+set_property (TARGET stemlib PROPERTY CXX_STANDARD 20)
 
-find_package (asio CONFIG REQUIRED)
-target_link_libraries (stemlib PRIVATE asio asio::asio)
+set (BUILD_SHARED_LIBS OFF)
+add_subdirectory ("external/poco")
 
-#use vcpkg
+target_link_libraries (stemlib Poco::Net)

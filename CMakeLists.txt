@@ -2,16 +2,26 @@
 
 project ("stemlib")
 
-add_executable (
-	stemlib
+add_library (
+	${PROJECT_NAME}
+	STATIC
 	"src/stemlib.cpp"
 	"src/stemlib.hpp"
-	"main.cpp"
 )
 
-set_property (TARGET stemlib PROPERTY CXX_STANDARD 20)
+set_property (TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
 
 set (BUILD_SHARED_LIBS OFF)
 add_subdirectory ("external/poco")
 
-target_link_libraries (stemlib Poco::Net)
+target_link_libraries (${PROJECT_NAME} Poco::Net)
+
+add_executable (
+	stemchat
+	"stemchat.cpp"
+)
+
+target_link_libraries (
+	stemchat
+	${PROJECT_NAME}
+)

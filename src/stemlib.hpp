@@ -27,7 +27,7 @@ namespace stemlib
 
 	/// <summary>
 	/// Type definition for channel listeners that should accept Channel object
-	/// and ByteVector containing arbitrary data sent received and loopbacked
+	/// and ByteVector containing arbitrary data received and loopbacked
 	/// </summary>
 	typedef std::function<void(Channel, ByteVector)> Listener;
 

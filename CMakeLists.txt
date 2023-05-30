@@ -2,7 +2,12 @@
 
 project ("stemlib")
 
-add_executable (stemlib "stemlib.cpp" "stemlib.hpp")
+add_executable (
+	stemlib
+	"src/stemlib.cpp"
+	"src/stemlib.hpp"
+	"main.cpp"
+)
 
 set_property (TARGET stemlib PROPERTY CXX_STANDARD 20)
 
